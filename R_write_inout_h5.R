@@ -16,258 +16,96 @@ library(Matrix)
 # Function 
 # -- Creates a new hdf5 file or Opens an existing one for read/write. 
 
+# however the hdf5 do not support for reclaiming the space
+h5 <- H5File$new(file, "w")
+
+file ="pd.h5"
+
+setwd("B:/Provincial_laboratory")
+h5$close_all()
 # write the hdf5
 R_write_hdf5 <- function(data = NULL, 
-                         file = NULL, 
-                         unmodified.dataset = c("rawData", "normData", "scaleData", 
-                                                "observes",  "variables", "PCA", "ICA", 
-                                                "TSNE", "UMAP", "knn", "snn")
+                         file = NULL
 ){
-  if(is.null(data)){
-    stop("object ", substitute(data), " not found")
-  }
-  else if(class(data) != "Seurat"){
-    stop("oject ", substitute(data), " class is not Seurat object")
-  }
   if(is.null(file)){
     stop("No such file or directory") 
   }
-  h5 <- H5File$new(filename = file, mode = "a")
+  h5 <- H5File$new(filename = file, mode = "w")
+  if(class(data) != "Seurat"){
+    h5$close_all()
+    stop("oject ", substitute(data), " class is not Seurat object")
+  }
   # data is not null, data is Seurat object
   # file is not null, mode have to be unique
-  if("dimNames" %in% names(h5)){
-    if(!"dimNames" %in% unmodified.dataset){
-      h5$link_delete("dimNames")
-      dimNames <- h5$create_group("dimNames")
-      dimNames[["obs_names"]] <- colnames(data@assays$RNA@data)
-      dimNames[["var_names"]] <- rownames(data@assays$RNA@data)
-      print("The old dimNames has been coveraged")
-    }else{print("The dimNames has not been changed")}
-  }
-  else{
-    dimNames <- h5$create_group("dimNames")
-    dimNames[["obs_names"]] <- colnames(data@assays$RNA@data)
-    dimNames[["var_names"]] <- rownames(data@assays$RNA@data)
-    print("The new dimNames has been added")
-  }
-  # rewrite in rawData
-  if("rawData" %in% names(h5)){
-    if(!"rawData" %in% unmodified.dataset){
-      h5$link_delete("rawData")
-      rawData <- h5$create_group("rawData")
-      rawData[["values"]] <- data@assays$RNA@counts@x
-      rawData[["indices"]] <- data@assays$RNA@counts@i
-      rawData[["indptr"]] <- data@assays$RNA@counts@p
-      rawData[["dims"]] <- rev(data@assays$RNA@counts@Dim)
-      print("The old rawData has been coveraged")
-    }else{print("The rawData has not been changed")}
-  } 
-  else{
-    # write in rawData
-    rawData <- h5$create_group("rawData")
-    rawData[["values"]] <- data@assays$RNA@counts@x
-    rawData[["indices"]] <- data@assays$RNA@counts@i
-    rawData[["indptr"]] <- data@assays$RNA@counts@p
-    rawData[["dims"]] <- rev(data@assays$RNA@counts@Dim)
-    print("The new rawData has been added")
-  }
-  # rewrite in normData
-  if("normData" %in% names(h5)){
-    if(!"normData" %in% unmodified.dataset){
-      h5$link_delete("normData")
-      normData <- h5$create_group("normData")
-      normData[["values"]] <- data@assays$RNA@data@x
-      normData[["indices"]] <- data@assays$RNA@data@i
-      normData[["indptr"]] <- data@assays$RNA@data@p
-      normData[["dims"]] <- rev(data@assays$RNA@data@Dim)
-      print("The old normData has been coveraged")
-    }else{print("The norm Data has not been changed")}
-  }
-  else{
-    # write in normData
-    normData <- h5$create_group("normData")
-    normData[["values"]] <- data@assays$RNA@data@x
-    normData[["indices"]] <- data@assays$RNA@data@i
-    normData[["indptr"]] <- data@assays$RNA@data@p
-    normData[["dims"]] <- rev(data@assays$RNA@data@Dim)
-    print("The new normData has been added")
-  }
-  # rewrite in scaleData
-  if("scaleData" %in% names(h5)){
-    if(!"scaleData" %in% unmodified.dataset){
-      h5$link_delete("scaleData")
-      scaleData <- h5$create_group("scaleData")
-      scaleData[["matrix"]] <- data@assays$RNA@scale.data
-      scaleData[["dims"]] <- rev(dim(data@assays$RNA@scale.data))
-      print("The old scaleData has been coveraged")
-    }else{print("The scaleData has not been changed")}
-  }
-  else{
-    # write in scaleData
+  # write in rawData
+  rawData <- h5$create_group("rawData")
+  rdata <- GetAssayData(object = data, slot = "data", assay = "RNA")
+  rawData[["values"]] <- rdata@x
+  rawData[["indices"]] <- rdata@i
+  rawData[["indptr"]] <- rdata@p
+  rawData[["dims"]] <- rev(rdata@Dim)
+  # write in normData
+  normData <- h5$create_group("normData")
+  ndata <- GetAssayData(object = data, slot = "data", assay = "RNA")
+  normData[["values"]] <- ndata@x
+  normData[["indices"]] <- ndata@i
+  normData[["indptr"]] <- ndata@p
+  normData[["dims"]] <- rev(ndata@Dim)
+  # write in scaleData
+  if(!is.null(data@assays$RNA@scale.data)){
     scaleData <- h5$create_group("scaleData")
-    scaleData[["matrix"]] <- data@assays$RNA@scale.data
-    scaleData[["dims"]] <- rev(dim(data@assays$RNA@scale.data))
-    print("The new scaleData has been added")
+    sdata <- GetAssayData(object = data, slot = "scale.data", assay = "RNA")
+    scaleData[["matrix"]] <- sdata
+    scaleData[["dims"]] <- rev(dim(sdata))
   }
   # annotation
-  if("annotation" %in% names(h5)){
-    annotation <- h5[["annotation"]]
-    if(!"observes" %in% unmodified.dataset){
-      if(!"observes" %in% names(annotation) & !is.null(data@meta.data)){
-        annotation[["observes"]] <- data@meta.data
-        h5attr(annotation[["observes"]], "colnames") <- colnames(data@meta.data)
-        print("The new annotation/observes has been added")
-      }else{
-        annotation$link_delete("observes")
-        annotation[["observes"]] <- data@meta.data
-        h5attr(annotation[["observes"]], "colnames") <- colnames(data@meta.data)
-        print("The old annotation/observes has been coveraged")
-      }
-    }
-    else{print("The annotation/observes has not been changed")}
-    if(!"variables" %in% unmodified.dataset){
-      if(!"variables" %in% names(annotation) & !is.null(data@assays$RNA@meta.features)){
-        annotation[["variables"]] <- data@assays$RNA@meta.features
-        h5attr(annotation[["variables"]], "colnames") <- colnames(data@assays$RNA@meta.features)
-        print("The new annotation/variables has been added")
-      }else{
-        annotation$link_delete("variables")
-        annotation[["variables"]] <- data@assays$RNA@meta.features
-        h5attr(annotation[["variables"]], "colnames") <- colnames(data@assays$RNA@meta.features)
-        print("The old annotation/variables has been coveraged")
-      }
-    }
-    else{print("The annotation/variables has not been changed")}
-  }else{
-    annotation <- h5$create_group("annotation")
-    # write in observes
-    annotation[["observes"]] <- data@meta.data
-    h5attr(annotation[["observes"]], "colnames") <- colnames(data@meta.data)
-    print("The new annotation/observes has been added")
-    # write in variables
-    annotation[["variables"]] <- data@assays$RNA@meta.features
-    h5attr(annotation[["variables"]], "colnames") <- colnames(data@assays$RNA@meta.features)
-    print("The new annotation/variables has been added")
+  annotation <- h5$create_group("annotation")
+  # write in observes
+  anno_obs <- data@meta.data
+  anno_obs$index <- rownames(anno_obs)
+  annotation[["observes"]] <- anno_obs
+  anno_list <- list(louvain_category = "seurat_clusters")
+  for(o in names(anno_list)){
+    h5attr(annotation[["observes"]], o) <- levels(data@meta.data[, anno_list[[o]]])
   }
+  # write in variables
+  anno_var <- data@assays$RNA@meta.features
+  anno_var$gene_ids <- rownames(anno_var)
+  annotation[["variables"]] <- anno_var
   # dimReduction
-  if("dimReduction" %in% names(h5)){
-    dimReduction <- h5[["dimReduction"]]
-    if(!"PCA" %in% unmodified.dataset){
-      # rewrite in pca
-      if(!"PCA" %in% names(dimReduction) & "pca" %in% names(data@reductions)){
-        dimReduction[["PCA"]] <- data@reductions$pca@cell.embeddings
-        print("The dimReduction/PCA has been added")
-      }else if ("PCA" %in% names(dimReduction) & "pca" %in% names(data@reductions)){
-        dimReduction$link_delete("PCA")
-        dimReduction[["PCA"]] <- data@reductions$pca@cell.embeddings
-        print("The old dimReduction/PCA has been coveraged")
-      }
-    }else{print("The dimReduction/PCA has not been changed")}
-    if(!"ICA" %in% unmodified.dataset){
-      # rewrite in ica
-      if(!"ICA" %in% names(dimReduction) & "ica" %in% names(data@reductions)){
-        dimReduction[["ICA"]] <- data@reductions$ica@cell.embeddings
-        print("The dimReduction/ICA has been added")
-      }else if("ICA" %in% names(dimReduction) & "ica" %in% names(data@reductions)){
-        dimReduction$link_delete("ICA")
-        dimReduction[["ICA"]] <- data@reductions$ica@cell.embeddings
-        print("The old dimReduction/ICA has been coveraged")
-      }
-    }else{print("The dimReduction/ICA has not been changed")}
-    if(!"TSNE" %in% unmodified.dataset){
-      # rewrite in tsne
-      if(!"TSNE" %in% names(dimReduction) & "tsne" %in% names(data@reductions)){
-        dimReduction[["TSNE"]] <- data@reductions$tsne@cell.embeddings
-        print("The dimReduction/TSNE has been added")
-      }else if("TSNE" %in% names(dimReduction) & "tsne" %in% names(data@reductions)){
-        dimReduction$link_delete("TSNE")
-        dimReduction[["TSNE"]] <- data@reductions$tsne@cell.embeddings
-        print("The old dimReduction/TSNE has been coveraged")
-      }
-    }else{print("The dimReduction/TSNE has not been changed")}
-    if(!"UMAP" %in% unmodified.dataset){
-      # rewrite in umap
-      if(!"UMAP" %in% names(dimReduction) & "umap" %in% names(data@reductions)){
-        dimReduction[["UMAP"]] <- data@reductions$umap@cell.embeddings
-        print("The dimReduction/UMAP has been added")
-      } else if("UMAP" %in% names(dimReduction) & "umap" %in% names(data@reductions)){
-        dimReduction$link_delete("UMAP")
-        dimReduction[["UMAP"]] <- data@reductions$umap@cell.embeddings
-        print("The old dimReduction/UMAP has been coveraged")
-      }
-    }else{print("The dimReduction/UMAP has not been changed")}
-  }else{
-    dimReduction <- h5$create_group("dimReduction")
-    if("pca" %in% names(data@reductions)){
-      # write in pca
-      dimReduction[["PCA"]] <- data@reductions$pca@cell.embeddings
-      print("The new dimReduction/PCA has been added")
-    }
-    if("ica" %in% names(data@reductions)){
-      # write in ica
-      dimReduction[["ICA"]] <- data@reductions$ica@cell.embeddings
-      print("The new dimReduction/ICA has been added")
-    }
-    if("tsne" %in% names(data@reductions)){
-      # write in tsne
-      dimReduction[["TSNE"]] <- data@reductions$tsne@cell.embeddings
-      print("The new dimReduction/TSNE has been added")
-    }
-    if("umap" %in% names(data@reductions)){
-      # write in umap
-      dimReduction[["UMAP"]] <- data@reductions$umap@cell.embeddings
-      print("The new dimReduction/UMAP has been added")
-    }
+  dimReduction <- h5$create_group("dimReduction")
+  dim_list <- list(pca = "PCA", ica = "ICA", nmf = "NMF", tsne = "TSNE", 
+                   umap = "UMAP", dc = "DC")
+  for(d in names(data@reductions)){
+    dimReduction[[dim_list[[d]]]] <- t(data@reductions[[d]]@cell.embeddings)
   }
-  if("graphs" %in% names(h5)){
-    graphs <- h5[["graphs"]]
-    if(!"knn" %in% unmodified.dataset){
-      # rewrite in knn
-      graphs$link_delete("knn")
-      knn <- graphs$create_group("knn")
-      knn[["values"]] <- data@graphs$RNA_nn@x
-      knn[["indices"]] <- data@graphs$RNA_nn@i
-      knn[["indptr"]] <- data@graphs$RNA_nn@p
-      knn[["dims"]] <- data@graphs$RNA_nn@Dim
-      print("The old graphs/knn has been coveraged")
-    }else{print("The graphs/knn has not been changed")}
-    if(!"snn" %in% unmodified.dataset){
-      # rewrite in snn
-      graphs$link_delete("snn")
-      snn <- graphs$create_group("snn")
-      snn[["values"]] <- data@graphs$RNA_snn@x
-      snn[["indices"]] <- data@graphs$RNA_snn@i
-      snn[["indptr"]] <- data@graphs$RNA_snn@p
-      snn[["dims"]]  <- data@graphs$RNA_snn@Dim
-      print("The old graphs/snn has been coveraged")
-    }else{print("The graphs/snn has not been changed")}
-  }else{
-    graphs <- h5$create_group("graphs")
-    if("RNA_nn" %in% names(data@graphs)){
-      # write in knn
-      knn <- graphs$create_group("knn")
-      knn[["values"]] <- data@graphs$RNA_nn@x
-      knn[["indices"]] <- data@graphs$RNA_nn@i
-      knn[["indptr"]] <- data@graphs$RNA_nn@p
-      knn[["dims"]] <- data@graphs$RNA_nn@Dim
-      print("The new graphs/knn has been added")
-    }
-    if("RNA_snn" %in% names(data@graphs)){
-      # rewrite in snn
-      snn <- graphs$create_group("snn")
-      snn[["values"]] <- data@graphs$RNA_snn@x
-      snn[["indices"]] <- data@graphs$RNA_snn@i
-      snn[["indptr"]] <- data@graphs$RNA_snn@p
-      snn[["dims"]] <- data@graphs$RNA_snn@Dim
-      print("The new graphs/snn has been added")
-    }
+  # graphs
+  graphs <- h5$create_group("graphs")
+  gra_list <- list(RNA_nn = "knn", RNA_snn = "snn")
+  for(g in names(data@graphs)){
+    ga <- graphs$create_group(gra_list[[g]])
+    ga[["values"]] <- data@graphs[[g]]@x
+    ga[["indices"]] <- data@graphs[[g]]@i
+    ga[["indptr"]] <- data@graphs[[g]]@p
+    ga[["dims"]] <- rev(data@graphs[[g]]@Dim)
   }
   # metaData
   h5$close_all()
+  return("The data was written in successfully")
 }
 
+R_write_hdf5(data = pbmc, file = file)
 
 
+
+h5 <- H5File$new(file, "r")
+
+head(h5[["annotation/observes"]][])
+
+
+h5$close_all()
+
+a = pbmc@assays$RNA@scale.data
 
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Read the Hdf5 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
@@ -366,26 +204,38 @@ R_read_hdf5 <- function(file = NULL){
   return(seurat)
 }
 
+h5$ls()
+h7 <- H5File$new("C:/Users/fenghuijian/py_test_2.hdf5", "r")
+h6 <- H5File$new("B:/Provincial_laboratory/pd.h5", "r")
+h6$close_all()
+
+
+annotation$create_dataset(n)
+
+h6[["annotation/observes"]]
+h7[["annotation/observes"]]
 
 
 
 
 
+h5 <- H5File$new("pdd.h5", "w")
 
+annotation=h5$create_group("annotation")
+logical_example <- H5T_LOGICAL$new(include_NA = TRUE)
+## we could also use h5types$H5T_LOGICAL or h5types$H5T_LOGICAL_NA
+logical_example$get_labels()
+logical_example$get_values()
+cpd_example <- H5T_COMPOUND$new(c("Double_col", "Int_col", "Logical_col"), 
+                                dtypes = list(h5types$H5T_NATIVE_DOUBLE, 
+                                              h5types$H5T_NATIVE_INT, logical_example))
+cpd_example
 
+test <- annotation$create_dataset(name = "test", dtype = cpd_example, space = )
 
+uint2_dt <- h5types$H5T_NATIVE_UINT32$set_size(1)$set_precision(2)$set_sign(h5const$H5T_SGN_NONE)
+ds_create_pl_nbit <- H5P_DATASET_CREATE$new()
+ds_create_pl_nbit$set_chunk(c(10, 10))$set_fill_value(uint2_dt, 1)$set_nbit()
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+c("da", 1)
 
