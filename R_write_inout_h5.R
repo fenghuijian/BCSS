@@ -7,235 +7,250 @@ library(Matrix)
 
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Write the Hdf5 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-
-# Instruction
-# -- data - An object whose class is Seurat
-# -- file - A file path
-# -- unmodified.dataset - User defined slots that are not changed to 
-# -- ------------------ - improve write-in efficiency
-# Function 
-# -- Creates a new hdf5 file or Opens an existing one for read/write. 
-
-# however the hdf5 do not support for reclaiming the space
-h5 <- H5File$new(file, "w")
-
-file ="pd.h5"
-
-setwd("B:/Provincial_laboratory")
-h5$close_all()
-# write the hdf5
-R_write_hdf5 <- function(data = NULL, 
-                         file = NULL
-){
-  if(is.null(file)){
-    stop("No such file or directory") 
+# matrix to h5
+matrix_to_h5 <- function(mat, h5_gp, gp_name = NULL){
+  if(!gp_name %in% names(h5_gp)){
+    h5mat = h5_gp$create_group(gp_name)
   }
-  h5 <- H5File$new(filename = file, mode = "w")
-  if(class(data) != "Seurat"){
-    h5$close_all()
-    stop("oject ", substitute(data), " class is not Seurat object")
+  else{
+    h5mat = h5_gp[[gp_name]]
   }
-  # data is not null, data is Seurat object
-  # file is not null, mode have to be unique
-  # write in rawData
-  rawData <- h5$create_group("rawData")
-  rdata <- GetAssayData(object = data, slot = "data", assay = "RNA")
-  rawData[["values"]] <- rdata@x
-  rawData[["indices"]] <- rdata@i
-  rawData[["indptr"]] <- rdata@p
-  rawData[["dims"]] <- rev(rdata@Dim)
-  # write in normData
-  normData <- h5$create_group("normData")
-  ndata <- GetAssayData(object = data, slot = "data", assay = "RNA")
-  normData[["values"]] <- ndata@x
-  normData[["indices"]] <- ndata@i
-  normData[["indptr"]] <- ndata@p
-  normData[["dims"]] <- rev(ndata@Dim)
-  # write in scaleData
-  if(!is.null(data@assays$RNA@scale.data)){
-    scaleData <- h5$create_group("scaleData")
-    sdata <- GetAssayData(object = data, slot = "scale.data", assay = "RNA")
-    scaleData[["matrix"]] <- sdata
-    scaleData[["dims"]] <- rev(dim(sdata))
+  if('dgCMatrix' %in% class(mat)){
+    h5mat[['values']] <- mat@x
+    h5mat[['indices']] <- mat@i
+    h5mat[['indptr']] <- mat@p
+    h5mat[['dims']] <- rev(mat@Dim)
+    h5attr(h5mat, 'datatype') <- 'SparseMatrix'
   }
-  # annotation
-  annotation <- h5$create_group("annotation")
-  # write in observes
-  anno_obs <- data@meta.data
-  anno_obs$index <- rownames(anno_obs)
-  annotation[["observes"]] <- anno_obs
-  anno_list <- list(louvain_category = "seurat_clusters")
-  for(o in names(anno_list)){
-    h5attr(annotation[["observes"]], o) <- levels(data@meta.data[, anno_list[[o]]])
+  else if('matrix' %in% class(mat)){
+    h5mat[['matrix']] <- mat
+    h5mat[['dims']] <- rev(dim(mat))
+    h5attr(h5mat, 'datatype') <- 'Array'
   }
-  # write in variables
-  anno_var <- data@assays$RNA@meta.features
-  anno_var$gene_ids <- rownames(anno_var)
-  annotation[["variables"]] <- anno_var
-  # dimReduction
-  dimReduction <- h5$create_group("dimReduction")
-  dim_list <- list(pca = "PCA", ica = "ICA", nmf = "NMF", tsne = "TSNE", 
-                   umap = "UMAP", dc = "DC")
-  for(d in names(data@reductions)){
-    dimReduction[[dim_list[[d]]]] <- t(data@reductions[[d]]@cell.embeddings)
-  }
-  # graphs
-  graphs <- h5$create_group("graphs")
-  gra_list <- list(RNA_nn = "knn", RNA_snn = "snn")
-  for(g in names(data@graphs)){
-    ga <- graphs$create_group(gra_list[[g]])
-    ga[["values"]] <- data@graphs[[g]]@x
-    ga[["indices"]] <- data@graphs[[g]]@i
-    ga[["indptr"]] <- data@graphs[[g]]@p
-    ga[["dims"]] <- rev(data@graphs[[g]]@Dim)
-  }
-  # metaData
-  h5$close_all()
-  return("The data was written in successfully")
 }
 
-R_write_hdf5(data = pbmc, file = file)
 
+# dataframe to h5
+df_to_h5 <- function(df, h5_anno, anno_dataset = NULL, anno_gp_name = NULL, anno_gp_dataset = NULL){
+  # remove the factor
+  cate_list <- list()
+  for(k in names(df)){
+    if(is.factor(df[[k]])){
+      obs_cate <- levels(df[[k]])
+      df[[k]] <- as.numeric(df[[k]]) - 1 # for 0 begin
+      cate_list[[k]] <- obs_cate
+    }
+  }
+  # to h5
+  if(is.null(anno_gp_name)){
+    h5_anno[[anno_dataset]] <- df
+    if(length(cate_list)>0){
+      for(j in names(cate_list)){
+        h5attr(h5_anno[[anno_dataset]], j) <- cate_list[[j]]
+      }
+    }
+  }
+  else{
+    if(!anno_gp_name %in% names(anno_h5)){
+      anno_gp <- h5_anno$create_group(anno_gp_name)
+    }
+    else{
+      anno_gp <- h5_anno[[anno_gp_name]]
+    }
+    anno_gp[[anno_gp_dataset]] <- df
+    if(length(cate_list)>0){
+      for(m in names(cate_list)){
+        h5attr(anno_gp[[anno_gp_dataset]], m) <- cate_list[[m]]
+      }
+    }
+  }
+}
 
-
-h5 <- H5File$new(file, "r")
-
-head(h5[["annotation/observes"]][])
-
-
-h5$close_all()
-
-a = pbmc@assays$RNA@scale.data
+# R write hdf5
+R_write_hdf5 <- function(adata = NULL, file = NULL){
+  if(is.null(file)){
+    stop('No such file or directory') 
+  }
+  if(class(adata) != 'Seurat'){
+    stop('oject ', substitute(adata), ' class is not Seurat object')
+  }
+  h5 <- H5File$new(filename = file, mode = 'w')
+  tryCatch({
+    # rdata
+    rdata <- Seurat::GetAssayData(object = adata, slot = 'data', assay = 'RNA')
+    matrix_to_h5(mat = rdata, h5_gp = h5, gp_name = 'rawData')
+    # ndata
+    ndata <- Seurat::GetAssayData(object = adata, slot = 'data', assay = 'RNA')
+    matrix_to_h5(mat = ndata, h5_gp = h5, gp_name = 'normData')
+    # sdata
+    sdata <- Seurat::GetAssayData(object = adata, slot = 'data', assay = 'RNA')
+    matrix_to_h5(mat = sdata, h5_gp = h5, gp_name = 'scaleData')
+    # annotation
+    annotation <- h5$create_group('annotation')
+    # -- observes
+    obs = adata@meta.data
+    obs[['index']] <- rownames(obs)
+    df_to_h5(df = obs, h5_anno = annotation, anno_dataset = 'observes')
+    # -- variables
+    ndvar = adata@assays$RNA@meta.features
+    ndvar[['index']] <- rownames(ndvar)
+    hvg <- adata@assays$RNA@var.features
+    ndvar[['highly_variable']] <- ndvar[['index']] %in% hvg
+    sdvar <- ndvar[hvg, ]
+    df_to_h5(df = ndvar, h5_anno = annotation, anno_gp_name = 'variables', anno_gp_dataset = 'ndVariables')
+    df_to_h5(df = sdvar, h5_anno = annotation, anno_gp_name = 'variables', anno_gp_dataset = 'sdVariables')
+    # dim reduction
+    dimReduction <- h5$create_group('dimReduction')
+    for(d in names(adata@reductions)){
+      D = toupper(d)
+      dimReduction[[D]] <- t(adata@reductions[[d]]@cell.embeddings)
+    }
+    # graphs
+    gra_list <- list(RNA_nn = 'knn', RNA_snn = 'snn')
+    graph_df <- adata@graphs
+    graphs <- h5$create_group('graphs')
+    for(g in names(graph_df)){
+      matrix_to_h5(mat=graph_df[[g]], h5_gp = graphs, gp_name = gra_list[[g]])
+    }
+    # metaData
+  }, error = function(err) {
+    cat("error!", err, "\n")
+  }, finally = {
+    h5$close_all()
+  }
+  )
+  return()
+}
 
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Read the Hdf5 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
 
+# h5 to the sparse matrix
+h5_to_matrix <-  function(gp_name, obs_names, var_names){
+  if(!all(rev(gp_name[['dims']][]) == c(length(var_names), length(obs_names)))){
+    return(warning('Matrix(SparseMatrix) does not correspond to the annotation dimension, do not read the Matrix', '\n'))
+  }else{
+    if(h5attr(gp_name, 'datatype') == 'SparseMatrix'){
+      mat <- Matrix::sparseMatrix(i = gp_name[['indices']][], 
+                                  p = gp_name[['indptr']][], 
+                                  x = gp_name[['values']][],
+                                  dims = rev(gp_name[['dims']][]), 
+                                  index1 = FALSE, 
+                                  dimnames = list(var_names, obs_names))
+    }
+    else if(h5attr(gp_name, 'datatype') == 'Array'){
+      if(all(gp_name[['matrix']]$dims == rev(gp_name[['dims']][]))){
+        mat <- gp_name[['matrix']][,]
+      }
+      else{
+        mat <- gp_name[['matrix']][,]
+        mat <- t(mat)
+      }
+      rownames(mat) <- var_names
+      colnames(mat) <- obs_names
+    }
+    return(mat)
+  }
+}
+
+
+# h5 to annotation
+h5_to_df <- function(anno_gp_name){
+  # recover the data frame
+  df <- anno_gp_name[]
+  rownames(df) <- df[['index']]
+  df <- df[!names(df) == 'index']
+  # recover the category or factor levels
+  if(length(h5attr_names(anno_gp_name)>0)){
+    for(k in h5attr_names(anno_gp_name)){
+      cate_levels <- h5attr(anno_gp_name, k)
+      k_cate <- cate_levels[df[[k]] + 1] # for begin 1
+      df[[k]] <- factor(k_cate, levels = cate_levels)
+    }
+  }
+  return(df)
+}
+
+
+
+# read h5    
 R_read_hdf5 <- function(file = NULL){
   if(is.null(file) | !file.exists(file)){
-    stop("No such file or directory")
+    stop('No such file or directory')
   } 
-  else if(file.exists(file)){
-    h5 <- H5File$new(filename = file, mode = "r")
+  h5 <- H5File$new(filename = file, mode = 'r')
+  tryCatch({
+    # recover annotation
+    anno <- h5[['annotation']]
+    obs_df <- h5_to_df(anno_gp_name = anno[['observes']])
+    sdvar_df <- h5_to_df(anno_gp_name = anno[['variables/sdVariables']])
+    ndvar_df <- h5_to_df(anno_gp_name = anno[['variables/ndVariables']])
+    obsm <- rownames(obs_df)
+    sdvarm <- rownames(sdvar_df)
+    ndvarm <- rownames(ndvar_df)
+    
+    # raw Data recover
+    if('rawData' %in% names(h5)){
+      raw_data <- h5_to_matrix(gp_name = h5[['rawData']],
+                               obs_names = obsm, 
+                               var_names = ndvarm)
+      seurat <- Seurat::CreateSeuratObject(counts = raw_data)
+    }else{
+      norm_data <- h5_to_matrix(gp_name = h5[['normData']],
+                                obs_names = obsm, 
+                                var_names = ndvarm)
+      seurat <- Seurat::CreateSeuratObject(counts = norm_data)
+    }
+    # norm Data recover
+    norm_data <- h5_to_matrix(gp_name = h5[['normData']],
+                              obs_names = obsm, 
+                              var_names = ndvarm)
+    seurat@assays$RNA@data <- norm_data
+    # scale data recover
+    scale_data <- h5_to_matrix(gp_name = h5[['scaleData']],
+                               obs_names = obsm,
+                               var_names = sdvarm)
+    # observes variable hvg
+    seurat@meta.data <- obs_df
+    seurat@assays$RNA@meta.features <- ndvar_df
+    seurat@assays$RNA@var.features <- sdvarm
+    # dimReduciton
+    dimR <- h5[['dimReduction']]
+    for(D in names(dimR)){
+      d = tolower(D)
+      dim_recover = t(dimR[[D]][,])
+      suppressWarnings( dim_recover_ <- Seurat::CreateDimReducObject(embeddings = dim_recover, 
+                                                                     key = paste0(D, "_"), assay = "RNA"))
+      seurat@reductions[[d]] <- dim_recover_
+    }
+    # graph
+    graphs <- h5[["graphs"]]
+    gra_list <- list(knn = "RNA_nn", snn = "RNA_snn")
+    for(g in names(graphs)){
+      graphs_neig_data = h5_to_matrix(gp_name = graphs[[g]], obs_names = obsm, var_names = obsm)
+      seurat@graphs[[gra_list[[g]]]] <- graphs_neig_data
+    }
+    # meta data
+  }, error = function(err) {
+    cat("error!", err, "\n")
+  }, finally = {
+    h5$close_all()
   }
-  # obs_names and var names
-  dimNames <- h5[["dimNames"]]
-  obs_names <- dimNames[["obs_names"]][]
-  var_names <- dimNames[["var_names"]][]
-  # raw Data recover
-  rawData <- h5[["rawData"]]
-  raw_data <- sparseMatrix(i = rawData[["indices"]][], 
-                           p = rawData[["indptr"]][], 
-                           x = rawData[["values"]][],
-                           dims = rev(rawData[["dims"]][]),
-                           dimnames = list(var_names, obs_names), 
-                           index1 = FALSE)
-  seurat <- CreateSeuratObject(counts = raw_data)
-  # norm Data recover
-  normData <- h5[["normData"]]
-  norm_data <- sparseMatrix(i = normData[["indices"]][], 
-                            p = normData[["indptr"]][], 
-                            x = normData[["values"]][],
-                            dims = rev(normData[["dims"]][]), 
-                            dimnames = list(var_names, obs_names), 
-                            index1 = FALSE)
-  seurat@assays$RNA@data <- norm_data
-  # scale Data recover
-  scaleData <- h5[["scaleData"]]
-  scale_data <- scaleData[["matrix"]][,]
-  rownames(scale_data) <- var_names
-  colnames(scale_data) <- obs_names
-  seurat@assays$RNA@scale.data <- scale_data
-  # meta data recover 
-  annotation <- h5[["annotation"]]
-  # 
-  metadata <- annotation[["observes"]][]
-  rownames(metadata) <- obs_name
-  seurat@meta.data <- metadata
-  features <- annotation[["variables"]][]
-  seurat@assays$RNA@meta.features <- features
-  # dimReduction
-  #pca
-  dimReduction <- h5[["dimReduction"]]
-  if("PCA" %in% names(dimReduction)){
-    pca <- dimReduction[["PCA"]][,]
-    rownames(pca) <- obs_names
-    pca_ <- CreateDimReducObject(embeddings = pca, key = "PCA_")
-    seurat@reductions$pca <- pca_
-  }
-  if("ICA" %in% names(dimReduction)){
-    ica <- dimReduction[["ICA"]][,]
-    rownames(ica) <- obs_names
-    ica_ <- CreateDimReducObject(embeddings = ica, key = "ICA_")
-    seurat@reductions$ica <- ica_
-  }
-  if("TSNE" %in% names(dimReduction)){
-    tsne <- dimReduction[["TSNE"]][,]
-    rownames(tsne) <- obs_name
-    tsne_ <- CreateDimReducObject(embeddings = tsne, key = "TSNE_")
-    seurat@reductions$tsne <- tsne_
-  }
-  if("UMAP" %in% names(dimReduction)){
-    umap <- dimReduction[["UMAP"]][,]
-    rownames(umap) <- obs_names
-    umap_ <- CreateDimReducObject(embeddings = umap, key = "UMAP_")
-    seurat@reductions$umap <- umap_
-  }
-  # graph
-  graphs <- h5[["graphs"]]
-  if("knn" %in% names(graphs)){
-    knn <- sparseMatrix(i = graphs[["knn/indices"]][], 
-                        p = graphs[["knn/indptr"]][], 
-                        x = graphs[["knn/values"]][], 
-                        dims = graphs[["knn/dims"]][], 
-                        dimnames = list(obs_names, obs_names), 
-                        index1 = FALSE)
-    seurat@graphs$RNA_nn <- knn
-  }
-  if("snn" %in% names(graphs)){
-    snn <- sparseMatrix(i = graphs[["snn/indices"]][], 
-                        p = graphs[["snn/indptr"]][], 
-                        x = graphs[["snn/values"]][], 
-                        dims = graphs[["snn/dims"]][], 
-                        dimnames = list(obs_names, obs_names),
-                        index1 = FALSE)
-    seurat@graphs$RNA_snn <- snn
-  }
-  # 
+  )
   return(seurat)
 }
 
-h5$ls()
-h7 <- H5File$new("C:/Users/fenghuijian/py_test_2.hdf5", "r")
-h6 <- H5File$new("B:/Provincial_laboratory/pd.h5", "r")
-h6$close_all()
-
-
-annotation$create_dataset(n)
-
-h6[["annotation/observes"]]
-h7[["annotation/observes"]]
 
 
 
 
 
-h5 <- H5File$new("pdd.h5", "w")
 
-annotation=h5$create_group("annotation")
-logical_example <- H5T_LOGICAL$new(include_NA = TRUE)
-## we could also use h5types$H5T_LOGICAL or h5types$H5T_LOGICAL_NA
-logical_example$get_labels()
-logical_example$get_values()
-cpd_example <- H5T_COMPOUND$new(c("Double_col", "Int_col", "Logical_col"), 
-                                dtypes = list(h5types$H5T_NATIVE_DOUBLE, 
-                                              h5types$H5T_NATIVE_INT, logical_example))
-cpd_example
 
-test <- annotation$create_dataset(name = "test", dtype = cpd_example, space = )
 
-uint2_dt <- h5types$H5T_NATIVE_UINT32$set_size(1)$set_precision(2)$set_sign(h5const$H5T_SGN_NONE)
-ds_create_pl_nbit <- H5P_DATASET_CREATE$new()
-ds_create_pl_nbit$set_chunk(c(10, 10))$set_fill_value(uint2_dt, 1)$set_nbit()
 
-c("da", 1)
+
+
+
+
 

@@ -4,7 +4,7 @@ Created on Fri Sep 27 23:23:03 2019
 
 @author: fenghuijian
 """
-
+# import the ne
 import h5py
 import numpy as np
 import scipy
@@ -13,13 +13,15 @@ import scanpy as sc
 import pandas as pd
 import anndata
 from pandas.api.types import is_string_dtype, is_categorical
-
+#import re
+#import os
 
 
 # dataframe to the array for the compound datatypes hdf5
-def df_to_arrays(df):
-    uns={}
-    names = ["index"]
+def df_to_h5(df, h5_anno, anno_dataset=None, anno_gp_name=None, anno_gp_dataset=None):
+    #to array
+    cate={}
+    names = ['index']
     if is_string_dtype(df.index):
         index = df.index.values.astype(h5py.special_dtype(vlen=str))
     else:
@@ -31,154 +33,188 @@ def df_to_arrays(df):
             arrays.append(df[k].values.astype(h5py.special_dtype(vlen=str)))
         elif is_categorical(df[k]):
             arrays.append(df[k].cat.codes)
-            uns[k + "_category"] = df[k].cat.categories
+            cate[k] = df[k].cat.categories
         else:
             arrays.append(df[k].values)
     dt = [d.dtype for d in arrays]
-    return np.rec.fromarrays(arrays, dtype = {"names" : names, "formats" : dt}), uns
+    h5_df = np.rec.fromarrays(arrays, dtype = {'names' : names, 'formats' : dt})
+    # to h5
+    if not anno_gp_name:
+        h5_anno_ds = h5_anno.create_dataset(anno_dataset, data=h5_df)
+        for o in cate:
+            h5_anno_ds.attrs[o] = cate[o].values.astype(h5py.special_dtype(vlen=str))
+    else:
+        if anno_gp_name not in h5_anno.keys():
+            h5_anno_gp = h5_anno.create_group(anno_gp_name)
+        else: 
+            h5_anno_gp = h5_anno[anno_gp_name]
+        h5_anno_gp_ds = h5_anno_gp.create_dataset(anno_gp_dataset, data=h5_df)
+        for p in cate:
+            h5_anno_gp_ds.attrs[p] = cate[p].values.astype(h5py.special_dtype(vlen=str))
+    return 
+
+
+# glabol function
+def namestr(obj, namespace):
+    return [name for name in namespace if namespace[name] is obj]
+
+
+# numpy array or scipy sparse matrix save to the h5
+def matrix_to_h5(mat, h5_gp, gp_name = None):
+    if gp_name not in h5_gp.keys():
+        h5mat = h5_gp.create_group(gp_name)
+    else:
+        h5mat = h5_gp[gp_name]
+    if isinstance(mat, scipy.sparse.csr.csr_matrix):
+        h5mat_i = h5mat.create_dataset("indices", data=mat.indices)
+        h5mat_p = h5mat.create_dataset("indptr", data=mat.indptr)
+        h5mat_x = h5mat.create_dataset("values", data=mat.data, dtype=np.float32)
+        h5mat_dims = h5mat.create_dataset("dims", data=mat.shape)
+        h5mat.attrs["datatype"] = "SparseMatrix"
+    elif isinstance(mat, np.ndarray):
+        h5mat_mat = h5mat.create_dataset("matrix", data=mat, dtype=np.float32)
+        h5mat_dims = h5mat.create_dataset("dims", data=mat.shape)
+        h5mat.attrs['datatype'] = 'Array'
+    return 
 
 
 
 
 # write hdf5
-def Py_write_hdf5(data=None, rawdata=None, save_basic = False, file = None):
-    def namestr(obj, namespace):
-        return [name for name in namespace if namespace[name] is obj]
+def Py_write_hdf5(adata=None, file = None):
     if file is None:
         raise OSError("No such file or directory")
+    if not isinstance(adata, anndata.AnnData):
+        raise TypeError("object '%s' class is not anndata.AnnData object" %namestr(adata, globals())[0])
     # w Create file, truncate if exists
     h5 = h5py.File(name=file, mode="w")   
-    if not isinstance(data, anndata.AnnData):
-        h5.close()
-        raise TypeError("object '%s' class is not anndata.AnnData object" %namestr(data, globals())[0])
-    else:
-        # normData must be corresponded data.raw.X
-        normData=h5.create_group("normData")
-        ndata_i=normData.create_dataset("indices", data=data.raw.X.indices, dtype="i4")
-        ndata_p=normData.create_dataset("indptr", data=data.raw.X.indptr, dtype="i4")
-        ndata_x=normData.create_dataset("values", data=data.raw.X.data, dtype="f4")
-        ndata_dims=normData.create_dataset("dims", data=data.raw.X.shape)
-        # scaleData must be corrsesponded data.X
-        scaleData=h5.create_group('scaleData')
-        sdata_matrix=scaleData.create_dataset("matrix", data=data.X, dtype="f4")
-        sdata_dims=scaleData.create_dataset("dims", data=data.X.shape) 
+    try:
+        # raw counts data is located the adata.layers['counts']
+        if "counts" in adata.layers.keys():
+            rdata = adata.layers["counts"]
+            # write in
+            matrix_to_h5(mat=rdata, h5_gp=h5, gp_name="rawData")
+        # normalized data is located the adata.raw.X
+        ndata = adata.raw.X
+        matrix_to_h5(mat=ndata, h5_gp=h5, gp_name="normData")
+        # scaledata is located the data.X
+        sdata = adata.X
+        matrix_to_h5(mat=sdata, h5_gp=h5, gp_name="scaleData")
         # annotation
-        annotation=h5.create_group('annotation')
-        # -- observes
-        obs,obs_uns = df_to_arrays(df = data.obs)
-        observes = annotation.create_dataset("observes", data = obs)
-        if not obs_uns is None:
-            for o in obs_uns:
-                observes.attrs[o]=obs_uns[o].values.astype(h5py.special_dtype(vlen=str))
-        # -- variables
-        var,var_uns = df_to_arrays(df = data.var)
-        variables = annotation.create_dataset("variables", data = var)
-        if not var_uns is None:
-            for v in var_uns:
-                variables.attrs[v]=var_uns[v].values.astype(h5py.special_dtype(vlen=str))
-        # data.var.to_hdf(file, key = "annotation/variables", mode = "w")
-        if save_basic is True:
-            if isinstance(rawdata, anndata.AnnData):
-                # rawData must be corresponded rawdata.X
-                rawData=h5.create_group("rawData")
-                rdata_i=rawData.create_dataset("indices", data=rawdata.X.indices, dtype="i4")
-                rdata_p=rawData.create_dataset("indptr", data=rawdata.X.indptr, dtype="i4")
-                rdata_x=rawData.create_dataset("values", data=rawdata.X.data, dtype="f4")
-                rdata_dims=rawData.create_dataset("dims", data=rawdata.X.shape)
-            else:
-                h5.close()
-                raise TypeError("object '%s' class is not anndata.AnnData object" %namestr(rawdata, globals())[0])
-        else:
-            # {"X_pca":"PCA", "X_ica":"ICA", "X_nmf":"NMF", "X_tsne":"TSNE", "X_umap":"UMAP", "X_da":"DC"}
-            dimReduction=h5.create_group("dimReduction")
-            dr={"X_pca":"PCA", "X_ica":"ICA", "X_nmf":"NMF", "X_tsne":"TSNE", "X_umap":"UMAP", "X_dc":"DC"}
-            for k in [k for k in data.obsm.keys()]:
-                    dimReduction.create_dataset(dr[k], data=data.obsm[k], dtype="f4")          
-            # graphs
-            graphs=h5.create_group("graphs")
-            # -- knn like
-            knn=graphs.create_group("knn")
-            knn_i=knn.create_dataset("indices", data = data.uns['neighbors']['distances'].indices, dtype="i4")
-            knn_p=knn.create_dataset("indptr", data = data.uns['neighbors']['distances'].indptr, dtype="i4")
-            knn_x=knn.create_dataset("values", data = data.uns['neighbors']['distances'].data, dtype="f4")
-            knn_i=knn.create_dataset("dims", data = data.uns['neighbors']['distances'].shape)
-            # -- snn like
-            snn=graphs.create_group("snn")
-            snn_i=snn.create_dataset("indices", data = data.uns['neighbors']['connectivities'].indices, dtype="i4")
-            snn_p=snn.create_dataset("indptr", data = data.uns['neighbors']['connectivities'].indptr, dtype="i4")
-            snn_x=snn.create_dataset("values", data = data.uns['neighbors']['connectivities'].data, dtype="f4")
-            snn_i=snn.create_dataset("dims", data = data.uns['neighbors']['connectivities'].shape)
-            
-            # close 
-            h5.close()
-    return "The data was written in successfully"
-    
+        annotation = h5.create_group('annotation')
+        df_to_h5(df=adata.obs, h5_anno=annotation, anno_dataset='observes')
+        # -- variables # ---- scaledata - variables # ---- normdata - variables
+        df_to_h5(df=adata.var, h5_anno=annotation, anno_gp_name='variables', anno_gp_dataset='sdVariables')
+        df_to_h5(df=adata.raw.var, h5_anno=annotation, anno_gp_name='variables', anno_gp_dataset='ndVariables')
+        # dimension reduction
+        dimReduction=h5.create_group("dimReduction")
+        for k in [k for k in adata.obsm.keys()]:
+            K = re.sub("^.*_", "", k).upper()
+            dimReduction.create_dataset(K, data=adata.obsm[k], dtype=np.float32)          
+        # graphs
+        gra_dict={"distances":"knn", "connectivities":"snn"}
+        graph_data = adata.uns['neighbors']
+        # -- save the neighbor graphs
+        graphs = h5.create_group('graphs')
+        for g in gra_dict.keys():
+            matrix_to_h5(mat=graph_data[g], h5_gp=graphs, gp_name=gra_dict[g])
+    except Exception as e:
+        print('Error:',e)
+    finally:
+        h5.close()
+    return 
 
 
-file = "py_test_2.hdf5"
-file = "py_test.hdf5"
-Py_write_hdf5(data = adata, file = file)
-h5.close()
 
-add=Py_read_hdf5(file)
+
+
 ############ read the hdf5 file
-def Py_read_hdf5(file = None, use_raw = False):
-    def h5_to_csr(gp):
-        x = gp["values"][()]
-        indices = gp["indices"][()]
-        indptr = gp["indptr"][()]
-        shape = gp["dims"][()]
-        sp_csr = sparse.csr_matrix((x,indices,indptr),shape=shape, dtype = "f4")
-        return sp_csr
-    def h5_to_df(anno_gp):
-        dict_ov={"observes":"obs_names", "variables":"var_names"}
-        list=[]
-        for k in dict_ov:
-            dict_ce={}
-            data = anno_gp[k][()]
-            for j in data.dtype.names:
-                if j=="index":
-                    dict_ce[dict_ov[k]] = data[j]
-                else:
-                    dict_ce[j] = data[j]
-            list.append(dict_ce)
-        return list
+
+# h5 to the scipy sparse csr format and ndarray
+def h5_to_matrix(gp_name):
+    if gp_name.attrs['datatype'] == 'SparseMatrix':
+        x = gp_name["values"][()].astype(np.float32)
+        indices = gp_name["indices"][()]
+        indptr = gp_name["indptr"][()]
+        shapes = gp_name["dims"][()]
+        mat = sparse.csr_matrix((x,indices,indptr),shape=shapes, dtype = np.float32)
+    elif gp_name.attrs['datatype'] == 'Array':
+        mat = gp_name['matrix'][()].astype(np.float32)
+    return mat
+
+
+
+
+
+# h5 to the pandas dataframe
+def h5_to_df(anno_gp_name):
+    # h5 to pandas dataframe
+    dict_ce={}
+    data = anno_gp_name[()]
+    for j in data.dtype.names:
+        if data[j].dtype == np.object:
+            if j == "index":
+                dict_ce["index"] = np.array(data[j].astype("str").tolist(), dtype =np.object0)
+            else:
+                dict_ce[j] = np.array(data[j].astype("str").tolist(), dtype =np.object0)
+        else:
+            dict_ce[j] = data[j]
+    df = pd.DataFrame(dict_ce)
+    df = df.set_index('index')
+    # recover pandas the category
+    if len(anno_gp_name.attrs.keys()) > 0:
+        for k in anno_gp_name.attrs.keys():
+            cate_levels = np.array(anno_gp_name.attrs[k].astype("str").tolist(), dtype = np.object0)
+            k_cate = cate_levels[df[k]]
+            df[k] = pd.Categorical(k_cate, categories = cate_levels)
+    return df
+
+
+# recover pandas category attribut
+
+def Py_read_hdf5(file = None):
     if file is None:
-        raise OSError("No such file or directory")
-    h5 = h5py.File(name=file, mode="r")
-    if use_raw:
-        rdata=h5["rawData"]
-        annotation=h5["annotation"]
-        sp_csr=h5_to_csr(rdata)
-        anno=h5_to_df(annotation)
-        adata = anndata.AnnData(sp_csr, anno[0], anno[1], dtype=sp_csr.dtype.name)
-    else:
-        ndata=h5["normData"]
-        sdata=h5["scaleData/matrix"][()]
-        dimR=h5["dimReduction"]
-        graphs=h5["graphs"]
-        annotation=h5["annotation"]
-        sp_csr=h5_to_csr(ndata)
-        anno=h5_to_df(annotation)
-        adata = anndata.AnnData(sp_csr, anno[0], anno[1], dtype=sp_csr.dtype.name)
-        adata.raw = adata
-        adata.X = sdata
-        dr={"PCA":"X_pca", "ICA":"X_ica", "NMF":"X_nmf", "TSNE": "X_tsne", "UMAP": "X_umap", "DC": "X_dc"}
+        raise OSError('No such file or directory')
+    h5 = h5py.File(name=file, mode='r')
+    try:
+        # normdata
+        normcounts = h5_to_matrix(gp_name=h5['normData'])
+            # scaledata
+        scaledata = h5_to_matrix(gp_name=h5['scaleData'])
+            # annotation
+        anno = h5['annotation']
+        obs_df = h5_to_df(anno_gp_name=anno['observes'])
+        sdvar_df = h5_to_df(anno_gp_name=anno['variables/sdVariables'])
+        ndvar_df = h5_to_df(anno_gp_name=anno['variables/ndVariables'])
+        # create the anndata
+        adata = anndata.AnnData(X=scaledata, obs=obs_df, var=sdvar_df)
+        adata0 = anndata.AnnData(X=normcounts, obs=obs_df, var=ndvar_df)
+        adata.raw = adata0
+        # add raw counts
+        if 'rawData' in h5.keys():
+            counts = h5_to_matrix(gp_name=h5['rawData'])
+            adata.layers['counts'] = counts
+        # dimension
+        dimR = h5['dimReduction']
         for k in dimR.keys():
-            adata.obsm[dr[k]] = dimR[k][()]
+            X_k = "X_" + k.lower()
+            adata.obsm[X_k] = dimR[k][()].astype(np.float32)
         # graphs :
+        graphs = h5['graphs']
         neig = {"knn":"distances", "snn":"connectivities"}
         neig_dict ={}
         for g in graphs.keys():
-            neig_dict[neig[g]]= h5_to_csr(graphs[g])
+            neig_dict[neig[g]]= h5_to_matrix(graphs[g])
         adata.uns["neighbors"] = neig_dict
+    except Exception as e:
+        print('Error:',e)
+    finally:
+        h5.close()
     return adata
 
 
 
+# test py read
+''' 
 
-
-
-
-
-
+'''
