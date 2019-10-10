@@ -5,8 +5,19 @@ library(Seurat)
 library(hdf5r)
 library(Matrix)
 
-
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Write the Hdf5 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+
+# Instruction
+# -- data - An object whose class is Seurat
+# -- file - A file path
+# -- unmodified.dataset - User defined slots that are not changed to 
+# -- ------------------ - improve write-in efficiency
+# Function 
+# -- Creates a new hdf5 file or Opens an existing one for read/write. 
+
+# however the hdf5 do not support for reclaiming the space
+# write the hdf5
+# matrix to h5
 # matrix to h5
 matrix_to_h5 <- function(mat, h5_gp, gp_name = NULL){
   if(!gp_name %in% names(h5_gp)){
@@ -51,7 +62,7 @@ df_to_h5 <- function(df, h5_anno, anno_dataset = NULL, anno_gp_name = NULL, anno
     }
   }
   else{
-    if(!anno_gp_name %in% names(anno_h5)){
+    if(!anno_gp_name %in% names(h5_anno)){
       anno_gp <- h5_anno$create_group(anno_gp_name)
     }
     else{
@@ -65,6 +76,7 @@ df_to_h5 <- function(df, h5_anno, anno_dataset = NULL, anno_gp_name = NULL, anno
     }
   }
 }
+
 
 # R write hdf5
 R_write_hdf5 <- function(adata = NULL, file = NULL){
@@ -107,8 +119,8 @@ R_write_hdf5 <- function(adata = NULL, file = NULL){
     }
     # graphs
     gra_list <- list(RNA_nn = 'knn', RNA_snn = 'snn')
-    graph_df <- adata@graphs
     graphs <- h5$create_group('graphs')
+    graph_df <- adata@graphs
     for(g in names(graph_df)){
       matrix_to_h5(mat=graph_df[[g]], h5_gp = graphs, gp_name = gra_list[[g]])
     }
@@ -119,7 +131,6 @@ R_write_hdf5 <- function(adata = NULL, file = NULL){
     h5$close_all()
   }
   )
-  return()
 }
 
 
@@ -195,21 +206,22 @@ R_read_hdf5 <- function(file = NULL){
                                obs_names = obsm, 
                                var_names = ndvarm)
       seurat <- Seurat::CreateSeuratObject(counts = raw_data)
+      # norm Data recover
+      norm_data <- h5_to_matrix(gp_name = h5[['normData']],
+                                obs_names = obsm, 
+                                var_names = ndvarm)
     }else{
       norm_data <- h5_to_matrix(gp_name = h5[['normData']],
                                 obs_names = obsm, 
                                 var_names = ndvarm)
       seurat <- Seurat::CreateSeuratObject(counts = norm_data)
     }
-    # norm Data recover
-    norm_data <- h5_to_matrix(gp_name = h5[['normData']],
-                              obs_names = obsm, 
-                              var_names = ndvarm)
     seurat@assays$RNA@data <- norm_data
     # scale data recover
     scale_data <- h5_to_matrix(gp_name = h5[['scaleData']],
                                obs_names = obsm,
                                var_names = sdvarm)
+    seurat@assays$RNA@scale.data <- scale_data
     # observes variable hvg
     seurat@meta.data <- obs_df
     seurat@assays$RNA@meta.features <- ndvar_df
@@ -239,7 +251,6 @@ R_read_hdf5 <- function(file = NULL){
   )
   return(seurat)
 }
-
 
 
 
