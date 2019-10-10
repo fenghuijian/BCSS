@@ -13,9 +13,8 @@ import scanpy as sc
 import pandas as pd
 import anndata
 from pandas.api.types import is_string_dtype, is_categorical
-#import re
-#import os
-
+import re
+import os
 
 # dataframe to the array for the compound datatypes hdf5
 def df_to_h5(df, h5_anno, anno_dataset=None, anno_gp_name=None, anno_gp_dataset=None):
@@ -78,7 +77,15 @@ def matrix_to_h5(mat, h5_gp, gp_name = None):
     return 
 
 
-
+# metadata to h5
+# colors
+def meta_to_h5(meta, h5_gp, gp_name=None):
+    cr = re.compile('.*(colors)')
+    meta_c = [m.group(0) for l in [l0 for l0 in meta.keys()] for m in [cr.search(l)] if m]
+    if len(meta_c)>0:
+        h5_gp_name = h5_gp.create_group(gp_name)
+        for c in meta_c:
+            h5_gp_name.create_dataset(c, data=meta[c].astype(h5py.special_dtype(vlen=str)))
 
 # write hdf5
 def Py_write_hdf5(adata=None, file = None):
@@ -112,18 +119,21 @@ def Py_write_hdf5(adata=None, file = None):
             K = re.sub("^.*_", "", k).upper()
             dimReduction.create_dataset(K, data=adata.obsm[k], dtype=np.float32)          
         # graphs
-        gra_dict={"distances":"knn", "connectivities":"snn"}
-        graph_data = adata.uns['neighbors']
-        # -- save the neighbor graphs
         graphs = h5.create_group('graphs')
-        for g in gra_dict.keys():
-            matrix_to_h5(mat=graph_data[g], h5_gp=graphs, gp_name=gra_dict[g])
+        if 'neighbors' in adata.uns.keys():
+            gra_dict={"distances":"knn", "connectivities":"snn"}
+            graph_data = adata.uns['neighbors']
+            # -- save the neighbor graphs
+            for g in gra_dict.keys():
+                matrix_to_h5(mat=graph_data[g], h5_gp=graphs, gp_name=gra_dict[g])
+        # meta data
+        meta = h5.create_group('metadata')
+        meta_to_h5(meta=adata.uns, h5_gp=meta, gp_name='colors')# colors
     except Exception as e:
         print('Error:',e)
     finally:
         h5.close()
-    return 
-
+    return
 
 
 
@@ -132,13 +142,13 @@ def Py_write_hdf5(adata=None, file = None):
 
 # h5 to the scipy sparse csr format and ndarray
 def h5_to_matrix(gp_name):
-    if gp_name.attrs['datatype'] == 'SparseMatrix':
+    if gp_name.attrs['datatype'] == 'SparseMatrix' or gp_name.attrs['datatype'].astype('str').item() =='SparseMatrix':
         x = gp_name["values"][()].astype(np.float32)
         indices = gp_name["indices"][()]
         indptr = gp_name["indptr"][()]
         shapes = gp_name["dims"][()]
         mat = sparse.csr_matrix((x,indices,indptr),shape=shapes, dtype = np.float32)
-    elif gp_name.attrs['datatype'] == 'Array':
+    elif gp_name.attrs['datatype'] == 'Array' or  gp_name.attrs['datatype'].astype('str').item() == 'Array':
         mat = gp_name['matrix'][()].astype(np.float32)
     return mat
 
@@ -165,7 +175,7 @@ def h5_to_df(anno_gp_name):
     if len(anno_gp_name.attrs.keys()) > 0:
         for k in anno_gp_name.attrs.keys():
             cate_levels = np.array(anno_gp_name.attrs[k].astype("str").tolist(), dtype = np.object0)
-            k_cate = cate_levels[df[k]]
+            k_cate = cate_levels[df[k].astype(np.int64)]
             df[k] = pd.Categorical(k_cate, categories = cate_levels)
     return df
 
