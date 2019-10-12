@@ -78,6 +78,57 @@ df_to_h5 <- function(df, h5_anno, anno_dataset = NULL, anno_gp_name = NULL, anno
 }
 
 
+adata_to_h5 <- function(adata=NULL, h5=NULL){
+  # rdata
+  rdata <- Seurat::GetAssayData(object = adata, slot = 'counts', assay = 'RNA')
+  matrix_to_h5(mat = rdata, h5_gp = h5, gp_name = 'rawData')
+  # ndata
+  ndata <- Seurat::GetAssayData(object = adata, slot = 'data', assay = 'RNA')
+  matrix_to_h5(mat = ndata, h5_gp = h5, gp_name = 'normData')
+  # sdata
+  sdata <- Seurat::GetAssayData(object = adata, slot = 'scale.data', assay = 'RNA')
+  matrix_to_h5(mat = sdata, h5_gp = h5, gp_name = 'scaleData')
+  # anno
+  annotation <- h5$create_group('annotation')
+  # -- observes
+  obs = adata@meta.data
+  obs[['index']] <- rownames(obs)
+  df_to_h5(df = obs, h5_anno = annotation, anno_dataset = 'observes')
+  # -- variables
+  ndvar = adata@assays$RNA@meta.features
+  ndvar[['index']] <- rownames(ndvar)
+  hvg <- adata@assays$RNA@var.features
+  ndvar[['highly_variable']] <- ndvar[['index']] %in% hvg
+  sdvar <- ndvar[hvg, ]
+  df_to_h5(df = ndvar, h5_anno = annotation, anno_dataset = 'ndVariables')
+  df_to_h5(df = sdvar, h5_anno = annotation, anno_dataset = 'sdVariables')
+  if(length(adata@reductions)>0){
+    dimReduction <- h5$create_group('dimReduction')
+    for(d in names(adata@reductions)){
+      D = toupper(d)
+      dimReduction[[D]] <- t(adata@reductions[[d]]@cell.embeddings)
+    }
+  }
+  if(length(adata@graphs)>0){
+    gra_list <- list(RNA_nn = 'knn', RNA_snn = 'snn')
+    graphs <- h5$create_group('graphs')
+    graph_df <- adata@graphs
+    for(g in names(graph_df)){
+      matrix_to_h5(mat=graph_df[[g]], h5_gp = graphs, gp_name = gra_list[[g]])
+    }
+  }
+  if(length(adata@misc)>0){
+    meta <- h5$create_group('metadata')
+    colo <- grep('color', names(adata@misc), value = TRUE)
+    if(length(colo)>0){
+      color <- meta$create_group('colors')
+      for(co in colo){
+        color[[co]] <- adata@misc[[co]]
+      }
+    }
+  }
+}
+
 # R write hdf5
 R_write_hdf5 <- function(adata = NULL, file = NULL){
   if(is.null(file)){
@@ -88,43 +139,7 @@ R_write_hdf5 <- function(adata = NULL, file = NULL){
   }
   h5 <- H5File$new(filename = file, mode = 'w')
   tryCatch({
-    # rdata
-    rdata <- Seurat::GetAssayData(object = adata, slot = 'data', assay = 'RNA')
-    matrix_to_h5(mat = rdata, h5_gp = h5, gp_name = 'rawData')
-    # ndata
-    ndata <- Seurat::GetAssayData(object = adata, slot = 'data', assay = 'RNA')
-    matrix_to_h5(mat = ndata, h5_gp = h5, gp_name = 'normData')
-    # sdata
-    sdata <- Seurat::GetAssayData(object = adata, slot = 'data', assay = 'RNA')
-    matrix_to_h5(mat = sdata, h5_gp = h5, gp_name = 'scaleData')
-    # annotation
-    annotation <- h5$create_group('annotation')
-    # -- observes
-    obs = adata@meta.data
-    obs[['index']] <- rownames(obs)
-    df_to_h5(df = obs, h5_anno = annotation, anno_dataset = 'observes')
-    # -- variables
-    ndvar = adata@assays$RNA@meta.features
-    ndvar[['index']] <- rownames(ndvar)
-    hvg <- adata@assays$RNA@var.features
-    ndvar[['highly_variable']] <- ndvar[['index']] %in% hvg
-    sdvar <- ndvar[hvg, ]
-    df_to_h5(df = ndvar, h5_anno = annotation, anno_gp_name = 'variables', anno_gp_dataset = 'ndVariables')
-    df_to_h5(df = sdvar, h5_anno = annotation, anno_gp_name = 'variables', anno_gp_dataset = 'sdVariables')
-    # dim reduction
-    dimReduction <- h5$create_group('dimReduction')
-    for(d in names(adata@reductions)){
-      D = toupper(d)
-      dimReduction[[D]] <- t(adata@reductions[[d]]@cell.embeddings)
-    }
-    # graphs
-    gra_list <- list(RNA_nn = 'knn', RNA_snn = 'snn')
-    graphs <- h5$create_group('graphs')
-    graph_df <- adata@graphs
-    for(g in names(graph_df)){
-      matrix_to_h5(mat=graph_df[[g]], h5_gp = graphs, gp_name = gra_list[[g]])
-    }
-    # metaData
+    adata_to_h5(adata = adata, h5 = h5)
   }, error = function(err) {
     cat("error!", err, "\n")
   }, finally = {
@@ -183,6 +198,72 @@ h5_to_df <- function(anno_gp_name){
 }
 
 
+# 
+h5_to_adata <- function(h5 = NULL){
+  if('annotation' %in% names(h5)){
+    anno <- h5[['annotation']]
+    if('observes' %in% names(anno)){
+      obs_df <- h5_to_df(anno_gp_name = anno[['observes']])
+      obsm <- rownames(obs_df)
+      m1 <- 1
+    }
+    if('sdVariables' %in% names(anno)){
+      sdvar_df <- h5_to_df(anno_gp_name = anno[['sdVariables']])
+      sdvarm <- rownames(sdvar_df)
+      m2 <- 2
+    }
+    if('ndVariables' %in% names(anno)){
+      ndvar_df <- h5_to_df(anno_gp_name = anno[['ndVariables']])
+      ndvarm <- rownames(ndvar_df)
+      m3 <-3
+    }
+  }
+  if(m1+m2+m3 == 6){
+    if('normData' %in% names(h5)){
+      norm_data <- h5_to_matrix(gp_name = h5[['normData']], obs_names = obsm, var_names = ndvarm)
+      seurat <- Seurat::CreateSeuratObject(counts = norm_data)
+      # observes variable hvg
+      seurat@meta.data <- obs_df
+      seurat@assays$RNA@meta.features <- ndvar_df
+      seurat@assays$RNA@var.features <- sdvarm
+    }
+    if('scaleData' %in% names(h5)){
+      scale_data <- h5_to_matrix(gp_name = h5[['scaleData']], obs_names = obsm, var_names = sdvarm)
+      seurat@assays$RNA@scale.data <- scale_data
+    }
+    if('rawData' %in% names(h5)){
+      raw_data <- h5_to_matrix(gp_name = h5[['rawData']], obs_names = obsm, var_names = ndvarm)
+      seurat@assays$RNA@counts <- raw_data
+    }
+    if('dimReduction' %in% names(h5)){
+      dimR <- h5[['dimReduction']]
+      for(D in names(dimR)){
+        d = tolower(D)
+        dim_recover = t(dimR[[D]][,])
+        suppressWarnings( dim_recover_ <- Seurat::CreateDimReducObject(embeddings = dim_recover, key = paste0(D, "_"), assay = "RNA"))
+        seurat@reductions[[d]] <- dim_recover_
+      }
+    }
+    if('graphs' %in% names(h5)){
+      graphs <- h5[["graphs"]]
+      gra_list <- list(knn = "RNA_nn", snn = "RNA_snn")
+      for(g in names(graphs)){
+        graphs_neig_data = h5_to_matrix(gp_name = graphs[[g]], obs_names = obsm, var_names = obsm)
+        seurat@graphs[[gra_list[[g]]]] <- graphs_neig_data
+      }
+    }
+    if('metadata' %in% names(h5)){
+      meta <- h5[['metadata/colors']]
+      for( k in names(meta)){
+        colo <- meta[[k]][]
+        seurat@misc[[k]] <- colo
+      }
+    }
+    return(seurat)
+  }else{
+    stop("Dataset lacks the necessary information")
+  }
+}
 
 # read h5    
 R_read_hdf5 <- function(file = NULL){
@@ -191,58 +272,7 @@ R_read_hdf5 <- function(file = NULL){
   } 
   h5 <- H5File$new(filename = file, mode = 'r')
   tryCatch({
-    # recover annotation
-    anno <- h5[['annotation']]
-    obs_df <- h5_to_df(anno_gp_name = anno[['observes']])
-    sdvar_df <- h5_to_df(anno_gp_name = anno[['variables/sdVariables']])
-    ndvar_df <- h5_to_df(anno_gp_name = anno[['variables/ndVariables']])
-    obsm <- rownames(obs_df)
-    sdvarm <- rownames(sdvar_df)
-    ndvarm <- rownames(ndvar_df)
-    
-    # raw Data recover
-    if('rawData' %in% names(h5)){
-      raw_data <- h5_to_matrix(gp_name = h5[['rawData']],
-                               obs_names = obsm, 
-                               var_names = ndvarm)
-      seurat <- Seurat::CreateSeuratObject(counts = raw_data)
-      # norm Data recover
-      norm_data <- h5_to_matrix(gp_name = h5[['normData']],
-                                obs_names = obsm, 
-                                var_names = ndvarm)
-    }else{
-      norm_data <- h5_to_matrix(gp_name = h5[['normData']],
-                                obs_names = obsm, 
-                                var_names = ndvarm)
-      seurat <- Seurat::CreateSeuratObject(counts = norm_data)
-    }
-    seurat@assays$RNA@data <- norm_data
-    # scale data recover
-    scale_data <- h5_to_matrix(gp_name = h5[['scaleData']],
-                               obs_names = obsm,
-                               var_names = sdvarm)
-    seurat@assays$RNA@scale.data <- scale_data
-    # observes variable hvg
-    seurat@meta.data <- obs_df
-    seurat@assays$RNA@meta.features <- ndvar_df
-    seurat@assays$RNA@var.features <- sdvarm
-    # dimReduciton
-    dimR <- h5[['dimReduction']]
-    for(D in names(dimR)){
-      d = tolower(D)
-      dim_recover = t(dimR[[D]][,])
-      suppressWarnings( dim_recover_ <- Seurat::CreateDimReducObject(embeddings = dim_recover, 
-                                                                     key = paste0(D, "_"), assay = "RNA"))
-      seurat@reductions[[d]] <- dim_recover_
-    }
-    # graph
-    graphs <- h5[["graphs"]]
-    gra_list <- list(knn = "RNA_nn", snn = "RNA_snn")
-    for(g in names(graphs)){
-      graphs_neig_data = h5_to_matrix(gp_name = graphs[[g]], obs_names = obsm, var_names = obsm)
-      seurat@graphs[[gra_list[[g]]]] <- graphs_neig_data
-    }
-    # meta data
+    seurat <- h5_to_adata(h5 = h5 )
   }, error = function(err) {
     cat("error!", err, "\n")
   }, finally = {
@@ -251,6 +281,10 @@ R_read_hdf5 <- function(file = NULL){
   )
   return(seurat)
 }
+
+
+
+
 
 
 
