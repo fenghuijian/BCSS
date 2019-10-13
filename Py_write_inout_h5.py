@@ -4,9 +4,6 @@ Created on Fri Sep 27 23:23:03 2019
 
 @author: fenghuijian
 """
-# import the ne
-import h5py
-import numpy as np
 import scipy
 from scipy import sparse
 import scanpy as sc
@@ -103,8 +100,8 @@ def adata_to_h5(adata=None, h5=None):
                     matrix_to_h5(mat=ndata, h5_gp=h5, gp_name=k)
         if k == 'scaleData':
             sdata = adata.X
-            if not ndata is None:
-                if type(ndata) in dt:
+            if not sdata is None:
+                if type(sdata) in dt:
                     matrix_to_h5(mat=sdata, h5_gp=h5, gp_name=k)
         if k == 'annotation':
             annotation = h5.create_group(k)

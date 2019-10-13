@@ -1,5 +1,3 @@
-
-
 # library the prerequisite packages
 library(Seurat)
 library(hdf5r)
@@ -281,10 +279,6 @@ R_read_hdf5 <- function(file = NULL){
   )
   return(seurat)
 }
-
-
-
-
 
 
 
