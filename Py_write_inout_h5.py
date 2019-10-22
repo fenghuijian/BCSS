@@ -13,7 +13,7 @@ from pandas.api.types import is_string_dtype, is_categorical
 import re
 import os
 
-# dataframe to the array for the compound datatypes hdf5
+
 def df_to_h5(df, h5_anno, anno_dataset=None, anno_gp_name=None, anno_gp_dataset=None):
     #to array
     cate={}
@@ -71,6 +71,12 @@ def matrix_to_h5(mat, h5_gp, gp_name = None):
         h5mat_mat = h5mat.create_dataset("matrix", data=mat, dtype=np.float32)
         h5mat_dims = h5mat.create_dataset("dims", data=mat.shape)
         h5mat.attrs['datatype'] = 'Array'
+    elif isinstance(mat, anndata.core.views.SparseCSRView):
+        h5mat_i = h5mat.create_dataset("indices", data=mat.indices)
+        h5mat_p = h5mat.create_dataset("indptr", data=mat.indptr)
+        h5mat_x = h5mat.create_dataset("values", data=mat.data, dtype=np.float32)
+        h5mat_dims = h5mat.create_dataset("dims", data=mat.shape)
+        h5mat.attrs["datatype"] = "SparseMatrix"
     return 
 
 
@@ -83,19 +89,20 @@ def meta_to_h5(meta, h5, gp_name=None):
         h5_gp = h5.create_group('metadata')
         h5_gp_name = h5_gp.create_group(gp_name)
         for c in meta_c:
-            h5_gp_name.create_dataset(c, data=meta[c].astype(h5py.special_dtype(vlen=str)))
+            meta_col = np.array(meta[c])
+            h5_gp_name.create_dataset(c, data=meta_col.astype(h5py.special_dtype(vlen=str)))
 
 def adata_to_h5(adata=None, h5=None):
     h5_group={'rawData', 'normData','scaleData','annotation', 'dimReduction', 'graphs', 'metadata'}
-    dt = [np.ndarray, scipy.sparse.csr.csr_matrix]
+    dt = [np.ndarray, scipy.sparse.csr.csr_matrix, anndata.core.views.SparseCSRView]
     for k in h5_group:
         if k == 'rawData':
             if 'counts' in adata.uns.keys():
                 if type(adata.uns['counts']) in dt:
                     matrix_to_h5(mat=adata.uns['counts'], h5_gp=h5, gp_name=k)
         if k == 'normData':
-            ndata = adata.raw.X
-            if not ndata is None:
+            if not adata.raw is None:
+                ndata = adata.raw.X
                 if type(ndata) in dt:
                     matrix_to_h5(mat=ndata, h5_gp=h5, gp_name=k)
         if k == 'scaleData':
@@ -109,8 +116,10 @@ def adata_to_h5(adata=None, h5=None):
                 df_to_h5(df=adata.obs, h5_anno=annotation, anno_dataset='observes')
             if not adata.var is None:
                 df_to_h5(df=adata.var, h5_anno=annotation, anno_dataset='sdVariables')
-            if not adata.raw.var is None:
+            if not adata.raw is None:
                 df_to_h5(df=adata.raw.var, h5_anno=annotation, anno_dataset='ndVariables')
+            else:
+                df_to_h5(df=adata.var, h5_anno=annotation, anno_dataset='ndVariables')
         if k == 'dimReduction':
             if len(adata.obsm.keys()) > 0:
                 dimReduction=h5.create_group(k)

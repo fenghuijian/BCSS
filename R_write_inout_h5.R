@@ -149,7 +149,7 @@ R_write_hdf5 <- function(adata = NULL, file = NULL){
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Read the Hdf5 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
 
-# h5 to the sparse matrix
+# 
 h5_to_matrix <-  function(gp_name, obs_names, var_names){
   if(!all(rev(gp_name[['dims']][]) == c(length(var_names), length(obs_names)))){
     return(warning('Matrix(SparseMatrix) does not correspond to the annotation dimension, do not read the Matrix', '\n'))
@@ -217,28 +217,43 @@ h5_to_adata <- function(h5 = NULL){
     }
   }
   if(m1+m2+m3 == 6){
-    if('normData' %in% names(h5)){
+    if('normData' %in% names(h5) & !'rawData' %in% names(h5)){
       norm_data <- h5_to_matrix(gp_name = h5[['normData']], obs_names = obsm, var_names = ndvarm)
       seurat <- Seurat::CreateSeuratObject(counts = norm_data)
       # observes variable hvg
       seurat@meta.data <- obs_df
       seurat@assays$RNA@meta.features <- ndvar_df
       seurat@assays$RNA@var.features <- sdvarm
+    } else if('rawData' %in% names(h5) & !'normData' %in% names(h5)){
+      raw_data <- h5_to_matrix(gp_name = h5[['rawData']], obs_names = obsm, var_names = ndvarm)
+      seurat <- Seurat::CreateSeuratObject(counts = raw_data)
+      # observes variable hvg
+      seurat@meta.data <- obs_df
+      seurat@assays$RNA@meta.features <- ndvar_df
+      seurat@assays$RNA@var.features <- sdvarm
+    } else if('rawData' %in% names(h5) & 'normData' %in% names(h5)){
+      norm_data <- h5_to_matrix(gp_name = h5[['normData']], obs_names = obsm, var_names = ndvarm)
+      seurat <- Seurat::CreateSeuratObject(counts = norm_data)
+      # observes variable hvg
+      seurat@meta.data <- obs_df
+      seurat@assays$RNA@meta.features <- ndvar_df
+      seurat@assays$RNA@var.features <- sdvarm
+      # raw data
+      raw_data <- h5_to_matrix(gp_name = h5[['rawData']], obs_names = obsm, var_names = ndvarm)
+      seurat@assays$RNA@counts <- raw_data
     }
     if('scaleData' %in% names(h5)){
       scale_data <- h5_to_matrix(gp_name = h5[['scaleData']], obs_names = obsm, var_names = sdvarm)
-      seurat@assays$RNA@scale.data <- scale_data
-    }
-    if('rawData' %in% names(h5)){
-      raw_data <- h5_to_matrix(gp_name = h5[['rawData']], obs_names = obsm, var_names = ndvarm)
-      seurat@assays$RNA@counts <- raw_data
+      if(class(scale_data) == 'Matrix'){
+        seurat@assays$RNA@scale.data <- scale_data
+      }
     }
     if('dimReduction' %in% names(h5)){
       dimR <- h5[['dimReduction']]
       for(D in names(dimR)){
         d = tolower(D)
         dim_recover = t(dimR[[D]][,])
-        suppressWarnings( dim_recover_ <- Seurat::CreateDimReducObject(embeddings = dim_recover, key = paste0(D, "_"), assay = "RNA"))
+        dim_recover_ <- Seurat::CreateDimReducObject(embeddings = dim_recover, key = paste0(D, "_"), assay = "RNA")
         seurat@reductions[[d]] <- dim_recover_
       }
     }
@@ -279,17 +294,3 @@ R_read_hdf5 <- function(file = NULL){
   )
   return(seurat)
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
