@@ -244,7 +244,7 @@ h5_to_adata <- function(h5 = NULL){
     }
     if('scaleData' %in% names(h5)){
       scale_data <- h5_to_matrix(gp_name = h5[['scaleData']], obs_names = obsm, var_names = sdvarm)
-      if(class(scale_data) == 'Matrix'){
+      if(class(scale_data) == 'matrix'){
         seurat@assays$RNA@scale.data <- scale_data
       }
     }
