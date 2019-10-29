@@ -256,7 +256,10 @@ def meta_to_h5(meta, h5, gp_name=None):
 
 # save_data 1, only_raw; 2, only_norm: 3, raw_norm; 4, raw_norm_scal
 def adata_to_h5(adata=None, h5=None, save_data=None, assay_name='RNA'):
-    dt = [np.ndarray, scipy.sparse.csr.csr_matrix, anndata.core.views.SparseCSRView]
+    if 'base' in dir(anndata):
+        dt = [np.ndarray, scipy.sparse.csr.csr_matrix, anndata.base.SparseCSRView, anndata.base.ArrayView]
+    elif 'core' in dir(anndata):
+        dt = [np.ndarray, scipy.sparse.csr.csr_matrix, anndata.core.views.SparseCSRView, anndata.core.views.ArrayView]
     if save_data == 'only_raw':
         rdata = adata.X.copy()
         if not rdata is None:
