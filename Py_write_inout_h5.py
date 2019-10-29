@@ -5,7 +5,7 @@ Created on Fri Sep 27 23:23:03 2019
 @author: fenghuijian
 """
 
-
+# load the packages
 import scipy
 import scanpy as sc
 import pandas as pd
@@ -16,6 +16,7 @@ from pandas.api.types import is_string_dtype, is_categorical
 import re
 import os
 import h5py
+
 
 
 ############ read the hdf5 file
@@ -112,8 +113,7 @@ def h5_to_adata(h5 = None, assay_name = None):
             adata.raw = adata0
             adata.uns['counts'] = rdata
         else:
-            raise OSError("There is no proper data structure")
-            
+            raise OSError("There is no proper data structure")  
         if 'dimReduction' in h5.keys():
             dimR = h5['dimReduction']
             for k in dimR.keys():
@@ -130,6 +130,7 @@ def h5_to_adata(h5 = None, assay_name = None):
             meta = h5['metadata/colors']
             for k in meta.keys():
                 adata.uns[k] = np.array(meta[k][()].astype("str").tolist(), dtype =np.object0)
+        adata.var['highly_variable'] = adata.var['highly_variable'].astype('bool')
         return adata
     else:
         raise OSError("Please provide the correct assay_name")
@@ -148,8 +149,6 @@ def Py_read_hdf5(file = None, assay_name = None):
     finally:
         h5.close()
     return adata
-
-
 
 
 
@@ -216,13 +215,31 @@ def matrix_to_h5(mat, h5_gp, gp_name = None):
         h5mat_mat = h5mat.create_dataset("matrix", data=mat, dtype=np.float32)
         h5mat_dims = h5mat.create_dataset("dims", data=mat.shape)
         h5mat.attrs['datatype'] = 'Array'
-    elif isinstance(mat, anndata.core.views.SparseCSRView):
-        h5mat_i = h5mat.create_dataset("indices", data=mat.indices)
-        h5mat_p = h5mat.create_dataset("indptr", data=mat.indptr)
-        h5mat_x = h5mat.create_dataset("values", data=mat.data, dtype=np.float32)
-        h5mat_dims = h5mat.create_dataset("dims", data=mat.shape)
-        h5mat.attrs["datatype"] = "SparseMatrix"
+    elif 'core' in dir(anndata):
+        if isinstance(mat, anndata.core.views.SparseCSRView):
+            h5mat_i = h5mat.create_dataset("indices", data=mat.indices)
+            h5mat_p = h5mat.create_dataset("indptr", data=mat.indptr)
+            h5mat_x = h5mat.create_dataset("values", data=mat.data, dtype=np.float32)
+            h5mat_dims = h5mat.create_dataset("dims", data=mat.shape)
+            h5mat.attrs["datatype"] = "SparseMatrix"
+        elif isinstance(mat, anndata.core.views.ArrayView):
+            h5mat_mat = h5mat.create_dataset("matrix", data=mat, dtype=np.float32)
+            h5mat_dims = h5mat.create_dataset("dims", data=mat.shape)
+            h5mat.attrs['datatype'] = 'Array'
+    elif 'base' in dir(anndata):
+        if isinstance(mat, anndata.base.ArrayView):
+            h5mat_mat = h5mat.create_dataset("matrix", data=mat, dtype=np.float32)
+            h5mat_dims = h5mat.create_dataset("dims", data=mat.shape)
+            h5mat.attrs['datatype'] = 'Array'
+        elif isinstance(mat, anndata.base.SparseCSRView):
+            h5mat_i = h5mat.create_dataset("indices", data=mat.indices)
+            h5mat_p = h5mat.create_dataset("indptr", data=mat.indptr)
+            h5mat_x = h5mat.create_dataset("values", data=mat.data, dtype=np.float32)
+            h5mat_dims = h5mat.create_dataset("dims", data=mat.shape)
+            h5mat.attrs["datatype"] = "SparseMatrix"
     return 
+
+
 
 
 # metadata to h5
@@ -338,6 +355,7 @@ def Py_write_hdf5(adata=None, file = None, save_data = None, assay_name = 'RNA')
     finally:
         h5.close()
     return
+
 
 
 
