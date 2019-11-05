@@ -1,7 +1,170 @@
-# library the prerequisite packages
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Read the Hdf5 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+# library
 library(Seurat)
 library(hdf5r)
 library(Matrix)
+# h5 to matrix
+h5_to_matrix <-  function(gp_name, obs_names, var_names){
+  if(!all(rev(gp_name[['dims']][]) == c(length(var_names), length(obs_names)))){
+    return(warning('Matrix(SparseMatrix) does not correspond to the annotation dimension, do not read the Matrix', '\n'))
+  }else{
+    if(h5attr(gp_name, 'datatype') == 'SparseMatrix'){
+      mat <- Matrix::sparseMatrix(i = gp_name[['indices']][], 
+                                  p = gp_name[['indptr']][], 
+                                  x = gp_name[['values']][],
+                                  dims = rev(gp_name[['dims']][]), 
+                                  index1 = FALSE, 
+                                  dimnames = list(var_names, obs_names))
+    }
+    else if(h5attr(gp_name, 'datatype') == 'Array'){
+      if(all(gp_name[['matrix']]$dims == rev(gp_name[['dims']][]))){
+        mat <- gp_name[['matrix']][,]
+      }
+      else{
+        mat <- gp_name[['matrix']][,]
+        mat <- t(mat)
+      }
+      rownames(mat) <- var_names
+      colnames(mat) <- obs_names
+    }
+    return(mat)
+  }
+}
+
+
+# h5 to annotation
+h5_to_df <- function(anno_gp_name){
+  # recover the data frame
+  df <- anno_gp_name[]
+  rownames(df) <- df[['index']]
+  df <- df[!names(df) == 'index']
+  # recover the category or factor levels
+  if(length(h5attr_names(anno_gp_name)>0)){
+    for(k in h5attr_names(anno_gp_name)){
+      cate_levels <- h5attr(anno_gp_name, k)
+      k_cate <- cate_levels[df[[k]] + 1] # for begin 1
+      df[[k]] <- factor(k_cate, levels = cate_levels)
+    }
+  }
+  return(df)
+}
+
+
+
+
+
+# h5 to the seurat
+h5_to_adata <- function(h5 = NULL, assay.name = NULL){
+  if(h5attr(h5, 'assay_name') == assay.name){
+    if('annotation' %in% names(h5)){
+      anno <- h5[['annotation']]
+      if('observes' %in% names(anno)){
+        obs_df <- h5_to_df(anno_gp_name = anno[['observes']])
+        obsm <- rownames(obs_df)
+      }else{
+        obs_df <- NULL
+      }
+      if('sdVariables' %in% names(anno)){
+        sdvar_df <- h5_to_df(anno_gp_name = anno[['sdVariables']])
+        sdvarm <- rownames(sdvar_df)
+      }else{
+        sdvar_df <- NULL
+      }
+      if('ndVariables' %in% names(anno)){
+        ndvar_df <- h5_to_df(anno_gp_name = anno[['ndVariables']])
+        ndvarm <- rownames(ndvar_df)
+      }else{
+        ndvar_df <- NULL
+      }
+    }
+    if('normData' %in% names(h5) & !'rawData' %in% names(h5)){
+      # only have norm data
+      if(!is.null(obs_df) & !is.null(ndvar_df)){
+        norm_data <- h5_to_matrix(gp_name = h5[['normData']], obs_names = obsm, var_names = ndvarm)
+        seurat <- Seurat::CreateSeuratObject(counts = norm_data, assay = assay.name)
+        slot(object = seurat, name = 'meta.data') <- obs_df
+        seurat@assays[[assay.name]]@meta.features <- ndvar_df
+        print("The 'normData' of H5 file is added to seurat object")
+      } else{stop('H5 data structures are lack of cellular or genetic annotation')}
+    } 
+    else if('rawData' %in% names(h5) & !'normData' %in% names(h5)){
+      # only have raw counts
+      if(!is.null(obs_df) & !is.null(ndvar_df)){
+        raw_data <- h5_to_matrix(gp_name = h5[['rawData']], obs_names = obsm, var_names = ndvarm)
+        seurat <- Seurat::CreateSeuratObject(counts = raw_data, assay = assay.name)
+        slot(object = seurat, name = 'meta.data') <- obs_df
+        seurat@assays[[assay.name]]@meta.features <- ndvar_df
+        print("The 'rawData' of H5 file is added to seurat object")
+      } else{stop('H5 data structures are lack of cellular or genetic annotation')}
+    } 
+    else if('rawData' %in% names(h5) & 'normData' %in% names(h5)){
+      # both the 'rawData' and 'normData'
+      if(!is.null(obs_df) & !is.null(ndvar_df)){
+        norm_data <- h5_to_matrix(gp_name = h5[['normData']], obs_names = obsm, var_names = ndvarm)
+        # raw data
+        raw_data <- h5_to_matrix(gp_name = h5[['rawData']], obs_names = obsm, var_names = ndvarm)
+        seurat <- Seurat::CreateSeuratObject(counts = raw_data, assay = assay.name)
+        slot(object = seurat, name = 'meta.data') <- obs_df
+        seurat@assays[[assay.name]]@data <- norm_data
+        seurat@assays[[assay.name]]@meta.features <- ndvar_df
+        cat("The 'rawData' of H5 file is added to seurat object\nThe 'normData' of H5 file is added to seurat object")
+      } else{stop('H5 data structures are lack of cellular or genetic annotation')}
+    } 
+    else{stop('Problem with data structure')}
+    if('scaleData' %in% names(h5)){
+      if(!is.null(sdvar_df)){
+        scale_data <- h5_to_matrix(gp_name = h5[['scaleData']], obs_names = obsm, var_names = sdvarm)
+        seurat@assays[[assay.name]]@scale.data <- scale_data
+        cat("\nThe 'scaleData' of H5 file is added to seurat object")
+      }
+    }
+    if('dimReduction' %in% names(h5)){
+      dimR <- h5[['dimReduction']]
+      for(D in names(dimR)){
+        d = tolower(D)
+        dim_recover = t(dimR[[D]][,])
+        dim_recover_ <- Seurat::CreateDimReducObject(embeddings = dim_recover, key = paste0(D, "_"), assay = "RNA")
+        seurat@reductions[[d]] <- dim_recover_
+        rownames(seurat@reductions[[d]]@cell.embeddings) = rownames(seurat[[]])
+      }
+    }
+    if('graphs' %in% names(h5)){
+      graphs <- h5[["graphs"]]
+      gra_list <- list(knn = "RNA_nn", snn = "RNA_snn")
+      for(g in names(graphs)){
+        graphs_neig_data = h5_to_matrix(gp_name = graphs[[g]], obs_names = obsm, var_names = obsm)
+        seurat@graphs[[gra_list[[g]]]] <- graphs_neig_data
+      }
+    }
+    if('metadata' %in% names(h5)){
+      meta <- h5[['metadata/colors']]
+      for( k in names(meta)){
+        colo <- meta[[k]][]
+        seurat@misc[[k]] <- colo
+      }
+    }
+    return(seurat)
+  }else{stop("Entering the 'assay.name' corresponding to h5")}
+  
+}
+
+# Read h5   
+R_read_hdf5 <- function(file = NULL, assay.name = 'RNA'){
+  if(is.null(file) | !file.exists(file)){
+    stop('No such file or directory')
+  } 
+  h5 <- H5File$new(filename = file, mode = 'r')
+  tryCatch({
+    seurat <- h5_to_adata(h5 = h5, assay.name = assay.name)
+  }, error = function(e) {
+    print(e)
+  }, finally = {
+    h5$close_all()
+  }
+  )
+  return(seurat)
+}
+
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Write the Hdf5 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
 # matrix to h5
@@ -169,175 +332,6 @@ R_write_hdf5 <- function(adata = NULL, file = NULL, assay.name = 'RNA'){
   }
   )
 }
-
-
-
-#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Read the Hdf5 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
-
-# h5 to matrix
-h5_to_matrix <-  function(gp_name, obs_names, var_names){
-  if(!all(rev(gp_name[['dims']][]) == c(length(var_names), length(obs_names)))){
-    return(warning('Matrix(SparseMatrix) does not correspond to the annotation dimension, do not read the Matrix', '\n'))
-  }else{
-    if(h5attr(gp_name, 'datatype') == 'SparseMatrix'){
-      mat <- Matrix::sparseMatrix(i = gp_name[['indices']][], 
-                                  p = gp_name[['indptr']][], 
-                                  x = gp_name[['values']][],
-                                  dims = rev(gp_name[['dims']][]), 
-                                  index1 = FALSE, 
-                                  dimnames = list(var_names, obs_names))
-    }
-    else if(h5attr(gp_name, 'datatype') == 'Array'){
-      if(all(gp_name[['matrix']]$dims == rev(gp_name[['dims']][]))){
-        mat <- gp_name[['matrix']][,]
-      }
-      else{
-        mat <- gp_name[['matrix']][,]
-        mat <- t(mat)
-      }
-      rownames(mat) <- var_names
-      colnames(mat) <- obs_names
-    }
-    return(mat)
-  }
-}
-
-
-# h5 to annotation
-h5_to_df <- function(anno_gp_name){
-  # recover the data frame
-  df <- anno_gp_name[]
-  rownames(df) <- df[['index']]
-  df <- df[!names(df) == 'index']
-  # recover the category or factor levels
-  if(length(h5attr_names(anno_gp_name)>0)){
-    for(k in h5attr_names(anno_gp_name)){
-      cate_levels <- h5attr(anno_gp_name, k)
-      k_cate <- cate_levels[df[[k]] + 1] # for begin 1
-      df[[k]] <- factor(k_cate, levels = cate_levels)
-    }
-  }
-  return(df)
-}
-
-
-
-
-
-# h5 to the seurat
-h5_to_adata <- function(h5 = NULL, assay.name = NULL){
-  if(h5attr(h5, 'assay_name') == assay.name){
-    if('annotation' %in% names(h5)){
-      anno <- h5[['annotation']]
-      if('observes' %in% names(anno)){
-        obs_df <- h5_to_df(anno_gp_name = anno[['observes']])
-        obsm <- rownames(obs_df)
-      }else{
-        obs_df <- NULL
-      }
-      if('sdVariables' %in% names(anno)){
-        sdvar_df <- h5_to_df(anno_gp_name = anno[['sdVariables']])
-        sdvarm <- rownames(sdvar_df)
-      }else{
-        sdvar_df <- NULL
-      }
-      if('ndVariables' %in% names(anno)){
-        ndvar_df <- h5_to_df(anno_gp_name = anno[['ndVariables']])
-        ndvarm <- rownames(ndvar_df)
-      }else{
-        ndvar_df <- NULL
-      }
-    }
-    if('normData' %in% names(h5) & !'rawData' %in% names(h5)){
-      # only have norm data
-      if(!is.null(obs_df) & !is.null(ndvar_df)){
-        norm_data <- h5_to_matrix(gp_name = h5[['normData']], obs_names = obsm, var_names = ndvarm)
-        seurat <- Seurat::CreateSeuratObject(counts = norm_data, assay = assay.name)
-        slot(object = seurat, name = 'meta.data') <- obs_df
-        seurat@assays[[assay.name]]@meta.features <- ndvar_df
-        print("The 'normData' of H5 file is added to seurat object")
-      } else{stop('H5 data structures are lack of cellular or genetic annotation')}
-    } 
-    else if('rawData' %in% names(h5) & !'normData' %in% names(h5)){
-      # only have raw counts
-      if(!is.null(obs_df) & !is.null(ndvar_df)){
-        raw_data <- h5_to_matrix(gp_name = h5[['rawData']], obs_names = obsm, var_names = ndvarm)
-        seurat <- Seurat::CreateSeuratObject(counts = raw_data, assay = assay.name)
-        slot(object = seurat, name = 'meta.data') <- obs_df
-        seurat@assays[[assay.name]]@meta.features <- ndvar_df
-        print("The 'rawData' of H5 file is added to seurat object")
-      } else{stop('H5 data structures are lack of cellular or genetic annotation')}
-    } 
-    else if('rawData' %in% names(h5) & 'normData' %in% names(h5)){
-      # both the 'rawData' and 'normData'
-      if(!is.null(obs_df) & !is.null(ndvar_df)){
-        norm_data <- h5_to_matrix(gp_name = h5[['normData']], obs_names = obsm, var_names = ndvarm)
-        # raw data
-        raw_data <- h5_to_matrix(gp_name = h5[['rawData']], obs_names = obsm, var_names = ndvarm)
-        seurat <- Seurat::CreateSeuratObject(counts = raw_data, assay = assay.name)
-        slot(object = seurat, name = 'meta.data') <- obs_df
-        seurat@assays[[assay.name]]@data <- norm_data
-        seurat@assays[[assay.name]]@meta.features <- ndvar_df
-      } else{stop('H5 data structures are lack of cellular or genetic annotation')}
-    } 
-    else{stop('Problem with data structure')}
-    if('scaleData' %in% names(h5)){
-      if(!is.null(sdvar_df)){
-        scale_data <- h5_to_matrix(gp_name = h5[['scaleData']], obs_names = obsm, var_names = sdvarm)
-        seurat@assays[[assay.name]]@scale.data <- scale_data
-        print("The 'scaleData' of H5 file is added to seurat object")
-      }
-    }
-    if('dimReduction' %in% names(h5)){
-      dimR <- h5[['dimReduction']]
-      for(D in names(dimR)){
-        d = tolower(D)
-        dim_recover = t(dimR[[D]][,])
-        dim_recover_ <- Seurat::CreateDimReducObject(embeddings = dim_recover, key = paste0(D, "_"), assay = "RNA")
-        seurat@reductions[[d]] <- dim_recover_
-        rownames(seurat@reductions[[d]]@cell.embeddings) = rownames(seurat[[]])
-      }
-    }
-    if('graphs' %in% names(h5)){
-      graphs <- h5[["graphs"]]
-      gra_list <- list(knn = "RNA_nn", snn = "RNA_snn")
-      for(g in names(graphs)){
-        graphs_neig_data = h5_to_matrix(gp_name = graphs[[g]], obs_names = obsm, var_names = obsm)
-        seurat@graphs[[gra_list[[g]]]] <- graphs_neig_data
-      }
-    }
-    if('metadata' %in% names(h5)){
-      meta <- h5[['metadata/colors']]
-      for( k in names(meta)){
-        colo <- meta[[k]][]
-        seurat@misc[[k]] <- colo
-      }
-    }
-    return(seurat)
-  }else{stop("Entering the 'assay.name' corresponding to h5")}
-  
-}
-
-# Read h5   
-R_read_hdf5 <- function(file = NULL, assay.name = 'RNA'){
-  if(is.null(file) | !file.exists(file)){
-    stop('No such file or directory')
-  } 
-  h5 <- H5File$new(filename = file, mode = 'r')
-  tryCatch({
-    seurat <- h5_to_adata(h5 = h5, assay.name = assay.name)
-  }, error = function(e) {
-    print(e)
-  }, finally = {
-    h5$close_all()
-  }
-  )
-  return(seurat)
-}
-
-
-
-
 
 
 
