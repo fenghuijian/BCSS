@@ -255,16 +255,21 @@ h5_to_adata <- function(h5 = NULL, assay.name = NULL){
         seurat <- Seurat::CreateSeuratObject(counts = norm_data, assay = assay.name)
         slot(object = seurat, name = 'meta.data') <- obs_df
         seurat@assays[[assay.name]]@meta.features <- ndvar_df
-      } else{stop('Data structures are lack of cellular or genetic annotation')}
-    } else if('rawData' %in% names(h5) & !'normData' %in% names(h5)){
+        print("The 'normData' of H5 file is added to seurat object")
+      } else{stop('H5 data structures are lack of cellular or genetic annotation')}
+    } 
+    else if('rawData' %in% names(h5) & !'normData' %in% names(h5)){
       # only have raw counts
       if(!is.null(obs_df) & !is.null(ndvar_df)){
         raw_data <- h5_to_matrix(gp_name = h5[['rawData']], obs_names = obsm, var_names = ndvarm)
         seurat <- Seurat::CreateSeuratObject(counts = raw_data, assay = assay.name)
         slot(object = seurat, name = 'meta.data') <- obs_df
         seurat@assays[[assay.name]]@meta.features <- ndvar_df
-      } else{stop('Data structures are lack of cellular or genetic annotation')}
-    } else if('rawData' %in% names(h5) & 'normData' %in% names(h5)){
+        print("The 'rawData' of H5 file is added to seurat object")
+      } else{stop('H5 data structures are lack of cellular or genetic annotation')}
+    } 
+    else if('rawData' %in% names(h5) & 'normData' %in% names(h5)){
+      # both the 'rawData' and 'normData'
       if(!is.null(obs_df) & !is.null(ndvar_df)){
         norm_data <- h5_to_matrix(gp_name = h5[['normData']], obs_names = obsm, var_names = ndvarm)
         # raw data
@@ -273,12 +278,14 @@ h5_to_adata <- function(h5 = NULL, assay.name = NULL){
         slot(object = seurat, name = 'meta.data') <- obs_df
         seurat@assays[[assay.name]]@data <- norm_data
         seurat@assays[[assay.name]]@meta.features <- ndvar_df
-      } else{stop('Data structures are lack of cellular or genetic annotation')}
-    } else{stop('Problem with data structure')}
+      } else{stop('H5 data structures are lack of cellular or genetic annotation')}
+    } 
+    else{stop('Problem with data structure')}
     if('scaleData' %in% names(h5)){
       if(!is.null(sdvar_df)){
         scale_data <- h5_to_matrix(gp_name = h5[['scaleData']], obs_names = obsm, var_names = sdvarm)
         seurat@assays[[assay.name]]@scale.data <- scale_data
+        print("The 'scaleData' of H5 file is added to seurat object")
       }
     }
     if('dimReduction' %in% names(h5)){
@@ -288,6 +295,7 @@ h5_to_adata <- function(h5 = NULL, assay.name = NULL){
         dim_recover = t(dimR[[D]][,])
         dim_recover_ <- Seurat::CreateDimReducObject(embeddings = dim_recover, key = paste0(D, "_"), assay = "RNA")
         seurat@reductions[[d]] <- dim_recover_
+        rownames(seurat@reductions[[d]]@cell.embeddings) = rownames(seurat[[]])
       }
     }
     if('graphs' %in% names(h5)){
@@ -306,7 +314,7 @@ h5_to_adata <- function(h5 = NULL, assay.name = NULL){
       }
     }
     return(seurat)
-  }else{stop('The assay information of h5 is inconsistent')}
+  }else{stop("Entering the 'assay.name' corresponding to h5")}
   
 }
 
@@ -326,7 +334,6 @@ R_read_hdf5 <- function(file = NULL, assay.name = 'RNA'){
   )
   return(seurat)
 }
-
 
 
 
