@@ -342,7 +342,8 @@ def h5_to_adata(h5 = None, assay_name = None):
             meta = h5['metadata/colors']
             for k in meta.keys():
                 adata.uns[k] = np.array(meta[k][()].astype("str").tolist(), dtype =np.object0)
-        adata.var['highly_variable'] = adata.var['highly_variable'].astype('bool')
+        if 'highly_variable' in adata.var.columns:
+            adata.var['highly_variable'] = adata.var['highly_variable'].astype('bool')
         return adata
     else:
         raise OSError("Please provide the correct assay_name")
